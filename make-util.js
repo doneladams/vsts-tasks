@@ -17,9 +17,6 @@ var downloadPath = path.join(__dirname, '_download');
 // list of .NET culture names
 var cultureNames = ['cs', 'de', 'es', 'fr', 'it', 'ja', 'ko', 'pl', 'pt-BR', 'ru', 'tr', 'zh-Hans', 'zh-Hant'];
 
-// list of locales that we translate to
-// var locales = ['de-de', 'en-US', 'es-es', 'fr-fr', 'it-IT', 'ja-jp', 'ko-KR', 'ru-RU', 'zh-CN', 'zh-TW'];
-
 //------------------------------------------------------------------------------
 // shell functions
 //------------------------------------------------------------------------------
@@ -1274,9 +1271,13 @@ var createNugetPackagePerTask = function (packagePath, /*nonAggregatedLayoutPath
     console.log();
     console.log('> Zipping task folders')
 
+    // maintain package references that we need to add to unified dependencies
     var unifiedDepsContent = [];
+
+    // maintain xml content for adding packages to servicing configuration
     var servicingXmlContent = [];
 
+    // iterate all the tasks
     fs.readdirSync(layoutPath)
         .forEach(function (taskFolderName) {
             var taskLayoutPath = path.join(layoutPath, taskFolderName);
@@ -1286,26 +1287,22 @@ var createNugetPackagePerTask = function (packagePath, /*nonAggregatedLayoutPath
             }
 
             // TODO: I think we can get rid of this.
-            if (taskFolderName === 'layout-version.txt') { // TODO: Clean this up. Make sure we have layout-version in each task nuget package? I think we need it? Is it applicable in nuget package per task setup?
-                return;
-            }
+            // if (taskFolderName === 'layout-version.txt') { // TODO: Clean this up. Make sure we have layout-version in each task nuget package? I think we need it? Is it applicable in nuget package per task setup?
+            //     return;
+            // }
 
             var taskJsonPath = path.join(taskLayoutPath, 'task.json');
             var taskJsonContents = JSON.parse(fs.readFileSync(taskJsonPath));
-
-            // extract values that we need from task.json
             var taskVersion = taskJsonContents.version.Major + '.' + taskJsonContents.version.Minor + '.' + taskJsonContents.version.Patch;
             var taskName = taskJsonContents.name;
 
             // Create the full task name so we don't need to rely on the folder name.
             var fullTaskName = `Mseng.MS.TF.DistributedTask.Tasks.${taskName}V${taskJsonContents.version.Major}`;
 
-            // Create xml entries for UnifiedDependencies
-            // <package id="Mseng.MS.TF.Build.Tasks.AzureCLI" version="1.132.0" availableAtDeployTime="true" />
-            // TODO: Push this to array then at the end sort then join so its in order.
+            // Create xml entry for UnifiedDependencies
             unifiedDepsContent.push(`  <package id="${fullTaskName}" version="${taskVersion}" availableAtDeployTime="true" />`);
 
-            // Get XML content that we need to configure servicing file
+            // Create xml entry that we need to configure servicing file
             servicingXmlContent.push(getServicingXmlContent(taskFolderName, fullTaskName, taskVersion));
 
             // Create a matching folder inside taskZipsPath
@@ -1313,40 +1310,20 @@ var createNugetPackagePerTask = function (packagePath, /*nonAggregatedLayoutPath
             mkdir('-p', taskZipPath);
             console.log('root task folder: ' + taskZipPath);
 
-            // var folderInsideFolderPath = path.join(taskZipPath, taskFolderName);
-            // mkdir('-p', folderInsideFolderPath);
-            // console.log('nested folder: ' + folderInsideFolderPath);
-
-            // TODO: Remove dependency for this too.
-            // var copydir = require('copy-dir');
-            // copydir.sync(taskLayoutPath, folderInsideFolderPath);
-
             // TOOD: This is probably slow. Check other code to do hard sync?
             fs.copyFileSync(path.join(taskLayoutPath, 'task.zip'), path.join(taskZipPath, 'task.zip'));
 
-            // Write layout version file. Make sure this is written to the root of the NuGet package with only the task.zip
-            // fs.writeFileSync(path.join(folderInsideFolderPath, 'layout-version.txt'), '3');
+            // Write layout version file. This will help us if we change the structure of the individual NuGet packages in the future.
             fs.writeFileSync(path.join(taskZipPath, 'layout-version.txt'), '3');
 
-            // Zip the folder from non aggregated layout and name it based on task.json contents. TODO: Refactor this to method?
-            // TODO IMPORTANT: We want to zip it as an entire folder so that when we unzip it's a full folder? Makes the servicing processing simpler.
-            // var taskZip = new admZip();
-            // taskZip.addLocalFolder(taskLayoutPath);
-            // taskZip.writeZip(path.join(taskZipPath, `${fullTaskName}.zip`));
-
-            // Now we can create the nuspec file, nupkg, and push.cmd
-            // var taskNuspecPath = createNuspecFile(taskLayoutPath, fullTaskName, taskVersion);
+            // Create the nuspec file, nupkg, and push.cmd
             var taskNuspecPath = createNuspecFile(taskZipPath, fullTaskName, taskVersion);
-
-            // var taskArtifactFolder = path.join(artifactsPath, taskFolderName);
-            // mkdir('-p', taskArtifactFolder);
-            
-            //var taskPublishFolder = createNuGetPackage(artifactsPath, taskFolderName, taskNuspecPath, taskLayoutPath);
             var taskPublishFolder = createNuGetPackage(artifactsPath, taskFolderName, taskNuspecPath, taskZipPath);
             createPushCmd(taskPublishFolder, fullTaskName, taskVersion);
         });
 
     // Create root push.cmd
+    // This lets us run one script to execute all nested push.cmd's. This is a courtesy that we do every sprint.
     console.log();
     console.log('> Creating root push.cmd')
     var contents = 'for /D %%s in (.\\*) do ( ' + os.EOL;
@@ -1357,53 +1334,50 @@ var createNugetPackagePerTask = function (packagePath, /*nonAggregatedLayoutPath
     var rootPushCmdPath = path.join(artifactsPath, 'push.cmd');
     fs.writeFileSync(rootPushCmdPath, contents);
 
-    // Create xml entries for UnifiedDependencies
-    // <package id="Mseng.MS.TF.Build.Tasks.AzureCLI" version="1.132.0" availableAtDeployTime="true" />
+    // Write file that has XML for unified dependencies, makes it easier to setup that file.
     console.log('> Generating XML dependencies for UnifiedDependencies');
     var depsContentPath = path.join(artifactsPath, 'unified_deps.xml');
     fs.writeFileSync(depsContentPath, unifiedDepsContent.sort().join(os.EOL));
 
-    // Create xml entries for servicing
-    // 	<File Origin="nuget://Mseng.MS.TF.DistributedTask.Tasks.XCode/*?version=2.121.0" />
+    // Write file that has XML for servicing, makes it easier to setup that file.
     console.log('> Generating XML dependencies for Servicing');
     var servicingContentPath = path.join(artifactsPath, 'servicing.xml');
     fs.writeFileSync(servicingContentPath, servicingXmlContent.sort().join(''));
 }
 exports.createNugetPackagePerTask = createNugetPackagePerTask;
 
-// Create xml entries for servicing
+// Create xml content for servicing.
 // <Directory Path="[ServicingDir]Tasks\Individual\AndroidSigningV2\">
 //   <File Origin="nuget://Mseng.MS.TF.DistributedTask.Tasks.AndroidSigningV2/*" />
 // </Directory>
+
+/**
+ * Create xml content for servicing.
+ * 
+ * <Directory Path="[ServicingDir]Tasks\Individual\AndroidSigningV2\">
+ *   <File Origin="nuget://Mseng.MS.TF.DistributedTask.Tasks.AndroidSigningV2/*" />
+ * </Directory>
+ *
+ * @param {*} taskFolderName 
+ * @param {*} fullTaskName 
+ * @param {*} taskVersion 
+ */
 var getServicingXmlContent = function (taskFolderName, fullTaskName, taskVersion) {
     var servicingXmlContent = '';
-    //servicingXmlContent += `  <!-- Files for ${fullTaskName} -->` + os.EOL;
+
     servicingXmlContent += `  <Directory Path="[ServicingDir]Tasks\\Individual\\${taskFolderName}\\">` + os.EOL;
     servicingXmlContent += `    <File Origin="nuget://${fullTaskName}/*" />` + os.EOL;
     servicingXmlContent += `  </Directory>` + os.EOL;
 
-    // locales.forEach(function (locale) {
-    //     servicingXmlContent += getServicingXmlContentForLocale(taskFolderName, fullTaskName, taskVersion, locale);
-    // });
-
-    // new line after to clear space for the next task
-    //servicingXmlContent += os.EOL;
-
     return servicingXmlContent;
 }
 
-// var getServicingXmlContentForLocale = function(taskFolderName, fullTaskName, taskVersion, locale) {
-//     return `  <Directory Path="[ServicingDir]Tasks\\Individual\\${taskFolderName}\\Strings\\resources.resjson\\${locale}\\">` + os.EOL
-//            + `    <File Origin="nuget://${fullTaskName}/${taskFolderName}/Strings/resources.resjson/${locale}/*?version=${taskVersion}" />` + os.EOL
-//            + `  </Directory>` + os.EOL;
-// }
-
 /**
- * Create .nuspec file for the task.
+ * Create .nuspec file for a task.
  * @param {*} taskLayoutPath Layout path for the specific task we are creating nuspec for. e.g. - _package\per-task-layout\AzurePowerShellV3__v3
  * @param {*} fullTaskName Full name of the task. e.g - AzureCLIV2
  * @param {*} taskVersion taskVersion Version of the task. e.g - 1.132.0
- * @returns Path of the nuspec file that was created. // e.g. - _package\per-task-layout\AzureCLIV1__v1\Mseng.MS.TF.DistributedTask.Tasks.AzureCLIV1.nuspec
+ * @returns Path of the nuspec file that was created. // e.g. - _package\per-task-layout\AzureCLIV1__v1\Mseng.MS.TF.DistributedTask.Tasks.AzureCLIV1.nuspec  // TODO: Is this sample path correct?
  */
 var createNuspecFile = function (taskLayoutPath, fullTaskName, taskVersion) {
     console.log('> Creating nuspec file');
@@ -1419,13 +1393,6 @@ var createNuspecFile = function (taskLayoutPath, fullTaskName, taskVersion) {
     contents += '      <description>For VSS internal use only</description>' + os.EOL;
     contents += '      <tags>VSSInternal</tags>' + os.EOL;
     contents += '   </metadata>' + os.EOL;
-
-    // // start experiment
-    // contents += '<files>' + os.EOL;
-    // contents += '<file src="**\*.*" target="MyLib" />' + os.EOL;
-    // contents += '</files>' + os.EOL;
-    // // end experiment
-
     contents += '</package>' + os.EOL;
 
     var taskNuspecPath = path.join(taskLayoutPath, fullTaskName + '.nuspec');
@@ -1437,11 +1404,11 @@ var createNuspecFile = function (taskLayoutPath, fullTaskName, taskVersion) {
 
 /**
  * Create .nupkg for a specific task.
- * @param {*} publishPath X. e.g - _package\per-task-publish
- * @param {*} taskFolderName X. e.g - AzurePowerShellV3__v3
- * @param {*} taskNuspecPath X. e.g - _package\per-task-layout\AzureCLIV1__v1\Mseng.MS.TF.DistributedTask.Tasks.AzureCLIV1.nuspec
- * @param {*} taskLayoutPath X. e.g - _package\per-task-layout\AzurePowerShellV3__v3
- * @returns Publish folder for the task. e.g - _package\per-task-publish\AzurePowerShellV3__v3
+ * @param {*} publishPath Path to publish tasks. e.g - _package\per-task-publish
+ * @param {*} taskFolderName Folder name for the task we want to create a NuGet package for. e.g - AzurePowerShellV3__v3 // TODO: Is this sample path correct?
+ * @param {*} taskNuspecPath Path to existing Nuspec file. e.g - _package\per-task-layout\AzureCLIV1__v1\Mseng.MS.TF.DistributedTask.Tasks.AzureCLIV1.nuspec
+ * @param {*} taskLayoutPath Path where task contents are layed out on disk. e.g - _package\per-task-layout\AzurePowerShellV3__v3 // TODO: Is this sample path correct?
+ * @returns Publish folder for the task. e.g - _package\per-task-publish\AzurePowerShellV3__v3 // TODO: Is this sample path correct?
  */
 var createNuGetPackage = function (publishPath, taskFolderName, taskNuspecPath, taskLayoutPath) {
     console.log('> Creating nuget package for task ' + taskFolderName);
@@ -1479,6 +1446,7 @@ var createPushCmd = function (taskPublishFolder, fullTaskName, taskVersion) {
     fs.writeFileSync(taskPushCmdPath, `nuget.exe push ${nupkgName} -source "${taskFeedUrl}" -apikey ${apiKey}`);
 }
 
+// TODO: Do we need to fix this?
 var createHotfixLayout = function (packagePath, taskName) {
     assert(packagePath, 'packagePath');
     assert(taskName, 'taskName');
