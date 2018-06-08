@@ -483,7 +483,6 @@ target.layout = function() {
     console.log('> Cleaning packge path');
     rm('-Rf', packagePath);
 
-    // TODO: Do we still need to do this? I think so, but then copy inside the createNugetPackagePerTask and only copy task.zip. That's all we need.
     var layoutPath = util.createNonAggregatedZip(buildPath, packagePath);
 
     console.log('layout path: ' + layoutPath);
@@ -509,9 +508,7 @@ target.layout = function() {
     //         // fs.renameSync(currentPath, newPath);
     //     });
 
-    // TODO: Will have to rerun this with new Task folder layout, then push to local NuGet, then regen the entire thing with push.cmd
-    // that goes to actual packaging, then push them up there. Don't do that until it's fully working end to end.
-    // create nuget package per task for older major versions of tasks
+    // Generate NuGet package per task for legacy packages.
     var legacyPath = path.join(__dirname, '_packageLegacy');
     if (test('-d', legacyPath)) {
         rm('-rf', legacyPath);
